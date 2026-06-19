@@ -4,14 +4,18 @@ from datetime import datetime
 import requests
 import uuid
 import os
+import json
+import logging
 
 app = FastAPI()
 
 UPLOAD_DIR = "uploads"
 PROCESSED_DIR = "processed"
+REQUESTS_DIR = "requests"
 
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(PROCESSED_DIR, exist_ok=True)
+os.makedirs(REQUESTS_DIR, exist_ok=True)
 
 
 @app.get("/")
@@ -173,7 +177,7 @@ async def process_photo(request: Request):
 @app.post("/inspect")
 async def inspect(request: Request):
     payload = await request.json()
-
+    # Log to console for quick debugging
     print("=" * 50)
     print("INCOMING PAYLOAD FROM APPSHEET BOT")
     print("=" * 50)
@@ -181,9 +185,36 @@ async def inspect(request: Request):
         print(f"  {key:<12} : {value}")
     print("=" * 50)
 
+    # Persist payload to files (JSON + human-readable text)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    file_base = f"{timestamp}_{uuid.uuid4()}"
+    json_path = os.path.join(REQUESTS_DIR, f"{file_base}.json")
+    txt_path = os.path.join(REQUESTS_DIR, f"{file_base}.txt")
+
+    stored = {"json": None, "text": None}
+
+    try:
+        with open(json_path, "w", encoding="utf-8") as jf:
+            json.dump(payload, jf, ensure_ascii=False, indent=2, default=str)
+        stored["json"] = json_path
+    except Exception as e:
+        print(f"Failed writing JSON payload: {e}")
+
+    try:
+        with open(txt_path, "w", encoding="utf-8") as tf:
+            tf.write("INCOMING PAYLOAD FROM APPSHEET BOT\n")
+            tf.write("" + "=" * 50 + "\n")
+            for key, value in payload.items():
+                tf.write(f"{key:<20}: {value}\n")
+            tf.write("" + "=" * 50 + "\n")
+        stored["text"] = txt_path
+    except Exception as e:
+        print(f"Failed writing text payload: {e}")
+
     return {
         "status": "received",
         "total_fields": len(payload),
+        "stored": stored,
         "payload": payload
     }
 
