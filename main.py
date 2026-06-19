@@ -170,6 +170,22 @@ async def process_photo(request: Request):
         "processed": len(processed_files),
         "files": processed_files
     }
+@app.post("/inspect")
+async def inspect(request: Request):
+    payload = await request.json()
+
+    print("=" * 50)
+    print("INCOMING PAYLOAD FROM APPSHEET BOT")
+    print("=" * 50)
+    for key, value in payload.items():
+        print(f"  {key:<12} : {value}")
+    print("=" * 50)
+
+    return {
+        "status": "received",
+        "total_fields": len(payload),
+        "payload": payload
+    }
 
 
 if __name__ == "__main__":
