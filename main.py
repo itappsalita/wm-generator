@@ -1,6 +1,9 @@
 from fastapi import FastAPI, Request
 from PIL import Image, ImageDraw, ImageFont
 from datetime import datetime
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
 import requests
 import uuid
 import os
@@ -9,31 +12,55 @@ import logging
 
 app = FastAPI()
 
-UPLOAD_DIR = "uploads"
-PROCESSED_DIR = "processed"
-REQUESTS_DIR = "requests"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
+PROCESSED_DIR = os.path.join(BASE_DIR, "processed")
+REQUESTS_DIR = os.path.join(BASE_DIR, "requests")
+SERVICE_ACCOUNT_FILE = os.path.join(BASE_DIR, "service-account.json")
+
+DRIVE_FOLDER_ID = "1anh13991wmHoArOKZNEuUI-JnkJEx8Qu"
 
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(PROCESSED_DIR, exist_ok=True)
 os.makedirs(REQUESTS_DIR, exist_ok=True)
 
+# in-memory tracker to skip already processed photos
+processed_tracker = {}
 
-@app.get("/")
-def root():
+
+# ── Google Drive ──────────────────────────────────────────
+
+def get_drive_service():
+    creds = service_account.Credentials.from_service_account_file(
+        SERVICE_ACCOUNT_FILE,
+        scopes=["https://www.googleapis.com/auth/drive"]
+    )
+    return build("drive", "v3", credentials=creds)
+
+
+def upload_to_drive(file_path: str, filename: str, folder_id: str) -> dict:
+    service = get_drive_service()
+
+    file_metadata = {
+        "name": filename,
+        "parents": [folder_id]
+    }
+
+    media = MediaFileUpload(file_path, mimetype="image/jpeg")
+
+    file = service.files().create(
+        body=file_metadata,
+        media_body=media,
+        fields="id, webViewLink"
+    ).execute()
+
     return {
-        "status": "running",
-        "service": "wm-generator"
+        "file_id": file.get("id"),
+        "drive_link": file.get("webViewLink")
     }
 
 
-@app.get("/get")
-def health_check():
-    return {
-        "status": "ok",
-        "service": "wm-generator",
-        "timestamp": datetime.now().isoformat()
-    }
-
+# ── Watermark ─────────────────────────────────────────────
 
 def get_font():
     try:
@@ -105,6 +132,25 @@ def add_watermark(
     image.save(output_file, quality=95)
 
 
+# ── Routes ────────────────────────────────────────────────
+
+@app.get("/")
+def root():
+    return {
+        "status": "running",
+        "service": "wm-generator"
+    }
+
+
+@app.get("/get")
+def health_check():
+    return {
+        "status": "ok",
+        "service": "wm-generator",
+        "timestamp": datetime.now().isoformat()
+    }
+
+
 @app.post("/process-photo")
 async def process_photo(request: Request):
 
@@ -115,7 +161,12 @@ async def process_photo(request: Request):
     date = payload.get("date", "-")
     latlong = payload.get("latlong", "-")
 
+    if row_id not in processed_tracker:
+        processed_tracker[row_id] = {}
+
     processed_files = []
+    skipped = []
+    failed = []
 
     for key, value in payload.items():
 
@@ -123,6 +174,11 @@ async def process_photo(request: Request):
             continue
 
         if not value:
+            continue
+
+        # skip if same photo already processed
+        if processed_tracker[row_id].get(key) == value:
+            skipped.append(key)
             continue
 
         try:
@@ -133,6 +189,7 @@ async def process_photo(request: Request):
             )
 
             if response.status_code != 200:
+                failed.append({"field": key, "reason": f"download failed {response.status_code}"})
                 continue
 
             filename = f"{uuid.uuid4()}.jpg"
@@ -158,22 +215,32 @@ async def process_photo(request: Request):
                 latlong
             )
 
+            drive_filename = f"WM_{row_id}_{key}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+            drive_result = upload_to_drive(processed_file, drive_filename, DRIVE_FOLDER_ID)
+
+            # mark as processed
+            processed_tracker[row_id][key] = value
+
             processed_files.append({
                 "field": key,
-                "file": processed_file
+                "drive_file_id": drive_result["file_id"],
+                "drive_link": drive_result["drive_link"]
             })
 
         except Exception as e:
-            print(
-                f"Failed processing {key}: {str(e)}"
-            )
+            print(f"Failed processing {key}: {str(e)}")
+            failed.append({"field": key, "reason": str(e)})
 
     return {
         "status": "success",
         "row_id": row_id,
         "processed": len(processed_files),
+        "skipped": skipped,
+        "failed": failed,
         "files": processed_files
     }
+
+
 @app.post("/inspect")
 async def inspect(request: Request):
     try:
@@ -205,5 +272,5 @@ if __name__ == "__main__":
     uvicorn.run(
         app,
         host="0.0.0.0",
-        port=8000
+        port=9000
     )
