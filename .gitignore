@@ -27,3 +27,6 @@ processed/*
 # OS
 .DS_Store
 Thumbs.db
+
+credentials.json
+token.pickle

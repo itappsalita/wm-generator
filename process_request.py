@@ -2,10 +2,11 @@ import json
 import os
 import sys
 import uuid
+import pickle
 import requests
 from PIL import Image, ImageDraw, ImageFont
 from datetime import datetime
-from google.oauth2 import service_account
+from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
@@ -15,16 +16,22 @@ BASE_DIR = "/var/www/wm-generator"
 REQUESTS_DIR = os.path.join(BASE_DIR, "requests")
 UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
 PROCESSED_DIR = os.path.join(BASE_DIR, "processed")
-SERVICE_ACCOUNT_FILE = os.path.join(BASE_DIR, "service-account.json")
+TOKEN_FILE = os.path.join(BASE_DIR, "token.pickle")
 DRIVE_FOLDER_ID = "1anh13991wmHoArOKZNEuUI-JnkJEx8Qu"
 
 # ── Drive ─────────────────────────────────────────────────
 
 def get_drive_service():
-    creds = service_account.Credentials.from_service_account_file(
-        SERVICE_ACCOUNT_FILE,
-        scopes=["https://www.googleapis.com/auth/drive"]
-    )
+    with open(TOKEN_FILE, "rb") as f:
+        creds = pickle.load(f)
+
+    # auto refresh if expired
+    if creds.expired and creds.refresh_token:
+        print("  Refreshing token...")
+        creds.refresh(Request())
+        with open(TOKEN_FILE, "wb") as f:
+            pickle.dump(creds, f)
+
     return build("drive", "v3", credentials=creds)
 
 
@@ -92,7 +99,6 @@ def main():
 
     filename = sys.argv[1]
 
-    # allow just the filename or full path
     if not os.path.isabs(filename):
         filepath = os.path.join(REQUESTS_DIR, filename)
     else:
@@ -111,7 +117,7 @@ def main():
     latlong = payload.get("latlong", "-")
 
     print(f"\n{'='*50}")
-    print(f"  Processing request: {filename}")
+    print(f"  Processing: {filename}")
     print(f"  ID      : {row_id}")
     print(f"  Project : {project}")
     print(f"  Date    : {date}")
@@ -129,7 +135,6 @@ def main():
             continue
 
         print(f"  [{key}] Downloading...")
-
         response = requests.get(value, timeout=60)
 
         if response.status_code != 200:
