@@ -75,17 +75,15 @@ def add_watermark(input_file, output_file, project, date, latlong):
     )
 
     bbox = draw.multiline_textbbox((0, 0), watermark_text, font=font)
-    text_width = bbox[2] - bbox[0]
     text_height = bbox[3] - bbox[1]
     padding = 20
     x = 20
     y = image.height - text_height - (padding * 2) - 20
 
-    draw.rectangle(
-        (x - padding, y - padding, x + text_width + padding, y + text_height + padding),
-        fill=(0, 0, 0)
-    )
+    # removed draw.rectangle here
+
     draw.multiline_text((x, y), watermark_text, fill=(255, 255, 255), font=font)
+
     image.save(output_file, quality=95)
 
 
