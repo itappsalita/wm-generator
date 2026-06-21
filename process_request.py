@@ -200,7 +200,6 @@ def main():
 
         # keep existing values unchanged
         appsheet_updates["latlong"] = latlong
-        appsheet_updates["email"] = email
 
         print(f"  Updates: {appsheet_updates}")
         status, result = update_appsheet_row(row_id, appsheet_updates)
