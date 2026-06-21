@@ -31,9 +31,6 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(PROCESSED_DIR, exist_ok=True)
 os.makedirs(REQUESTS_DIR, exist_ok=True)
 
-# in-memory tracker to skip already processed photos
-processed_tracker = {}
-
 
 # ── Google Drive ──────────────────────────────────────────
 
@@ -156,110 +153,77 @@ async def process_photo(request: Request):
     row_id = payload.get("id")
     project = payload.get("project", "-")
     date = payload.get("date", "-")
-    latlong = payload.get("latlong", "-")
+    latlong = payload.get("latlong", "")
     email = payload.get("email", "")
 
-    if row_id not in processed_tracker:
-        processed_tracker[row_id] = {}
+    print(f"\n{'='*50}")
+    print(f"  Processing row: {row_id}")
+    print(f"  ID      : {row_id}")
+    print(f"  Project : {project}")
+    print(f"  Date    : {date}")
+    print(f"  LatLong : {latlong}")
+    print(f"  Email   : {email}")
+    print(f"{'='*50}\n")
 
-    processed_files = []
-    skipped = []
-    failed = []
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    os.makedirs(PROCESSED_DIR, exist_ok=True)
+
     appsheet_updates = {}
 
     for key, value in payload.items():
-
         if not key.startswith("photo_"):
             continue
-
         if not value:
+            print(f"  [{key}] empty — skip")
             continue
 
-        # skip if same photo already processed
-        if processed_tracker[row_id].get(key) == value:
-            skipped.append(key)
+        print(f"  [{key}] Downloading...")
+        response = requests.get(value, timeout=60)
+
+        if response.status_code != 200:
+            print(f"  [{key}] Download failed: {response.status_code}")
             continue
 
-        try:
+        print(f"  [{key}] Downloaded {len(response.content)} bytes")
 
-            response = requests.get(
-                value,
-                timeout=60
-            )
+        filename_uuid = f"{uuid.uuid4()}.jpg"
+        original_file = os.path.join(UPLOAD_DIR, filename_uuid)
+        processed_file = os.path.join(PROCESSED_DIR, filename_uuid)
 
-            if response.status_code != 200:
-                failed.append({"field": key, "reason": f"download failed {response.status_code}"})
-                continue
+        with open(original_file, "wb") as f:
+            f.write(response.content)
 
-            filename = f"{uuid.uuid4()}.jpg"
+        print(f"  [{key}] Adding watermark...")
+        add_watermark(original_file, processed_file, project, date, latlong)
 
-            original_file = os.path.join(
-                UPLOAD_DIR,
-                filename
-            )
+        print(f"  [{key}] Uploading to Drive...")
+        drive_filename = f"WM_{row_id}_{key}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+        file_id, uploaded_name = upload_to_drive(processed_file, drive_filename)
 
-            processed_file = os.path.join(
-                PROCESSED_DIR,
-                filename
-            )
+        appsheet_path = f"Sheet1_Images/{uploaded_name}"
+        appsheet_updates[key] = appsheet_path
 
-            with open(original_file, "wb") as f:
-                f.write(response.content)
+        print(f"  [{key}] Uploaded → {appsheet_path}")
 
-            add_watermark(
-                original_file,
-                processed_file,
-                project,
-                date,
-                latlong
-            )
-
-            drive_filename = f"WM_{row_id}_{key}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
-            file_id, uploaded_name = upload_to_drive(processed_file, drive_filename)
-
-            # mark as processed
-            processed_tracker[row_id][key] = value
-
-            # queue this field for the AppSheet row update
-            # (note: 'latlong' is intentionally never included here —
-            # that column uses an AppSheet Initial Value / HERE() and
-            # should not be touched by this API update)
-            appsheet_path = f"Sheet1_Images/{uploaded_name}"
-            appsheet_updates[key] = appsheet_path
-
-            processed_files.append({
-                "field": key,
-                "drive_file_id": file_id,
-                "drive_filename": uploaded_name
-            })
-
-        except Exception as e:
-            print(f"Failed processing {key}: {str(e)}")
-            failed.append({"field": key, "reason": str(e)})
-
-    appsheet_status = None
-    appsheet_result = None
+    status = None
+    result = None
 
     if appsheet_updates:
-        try:
-            appsheet_status, appsheet_result = update_appsheet_row(
-                row_id, appsheet_updates, email
-            )
-        except Exception as e:
-            print(f"AppSheet update failed for row {row_id}: {str(e)}")
-            appsheet_status = "error"
-            appsheet_result = str(e)
+        print(f"\n  Updating AppSheet row {row_id}...")
+        print(f"  Updates: {appsheet_updates}")
+        status, result = update_appsheet_row(row_id, appsheet_updates, email)
+        print(f"  AppSheet response: {status} → {result}")
+    else:
+        print("\n  No photos to update in AppSheet.")
+
+    print("\nAll done!")
 
     return {
         "status": "success",
         "row_id": row_id,
-        "processed": len(processed_files),
-        "skipped": skipped,
-        "failed": failed,
-        "files": processed_files,
         "appsheet_updates": appsheet_updates,
-        "appsheet_status": appsheet_status,
-        "appsheet_result": appsheet_result
+        "appsheet_status": status,
+        "appsheet_result": result
     }
 
 
