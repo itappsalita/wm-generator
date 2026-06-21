@@ -55,7 +55,7 @@ def upload_to_drive(file_path, drive_filename):
 
 # ── AppSheet API ──────────────────────────────────────────
 
-def update_appsheet_row(row_id, updates):
+def update_appsheet_row(row_id, updates, email):
     url = f"https://api.appsheet.com/api/v2/apps/{APPSHEET_APP_ID}/tables/{APPSHEET_TABLE}/Action"
 
     headers = {
@@ -66,7 +66,8 @@ def update_appsheet_row(row_id, updates):
     body = {
         "Action": "Edit",
         "Properties": {
-            "Locale": "en-US"
+            "Locale": "en-US",
+             "RunAsUserEmail": email
         },
         "Rows": [
             {
@@ -202,7 +203,7 @@ def main():
         appsheet_updates["latlong"] = latlong
 
         print(f"  Updates: {appsheet_updates}")
-        status, result = update_appsheet_row(row_id, appsheet_updates)
+        status, result = update_appsheet_row(row_id, appsheet_updates, email)
         print(f"  AppSheet response: {status} → {result}")
     else:
         print("\n  No photos to update in AppSheet.")
