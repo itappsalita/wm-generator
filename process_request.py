@@ -6,6 +6,7 @@ import pickle
 import requests
 from PIL import Image, ImageDraw, ImageFont
 from datetime import datetime
+from dotenv import load_dotenv
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
@@ -13,11 +14,17 @@ from googleapiclient.http import MediaFileUpload
 # ── Config ────────────────────────────────────────────────
 
 BASE_DIR = "/var/www/wm-generator"
+load_dotenv(os.path.join(BASE_DIR, ".env"))
+
 REQUESTS_DIR = os.path.join(BASE_DIR, "requests")
 UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
 PROCESSED_DIR = os.path.join(BASE_DIR, "processed")
 TOKEN_FILE = os.path.join(BASE_DIR, "token.pickle")
-DRIVE_FOLDER_ID = "1anh13991wmHoArOKZNEuUI-JnkJEx8Qu"
+
+DRIVE_FOLDER_ID = os.getenv("DRIVE_FOLDER_ID")
+APPSHEET_APP_ID = os.getenv("APPSHEET_APP_ID")
+APPSHEET_API_KEY = os.getenv("APPSHEET_API_KEY")
+APPSHEET_TABLE = os.getenv("APPSHEET_TABLE", "Sheet1")
 
 # ── Drive ─────────────────────────────────────────────────
 
@@ -25,7 +32,6 @@ def get_drive_service():
     with open(TOKEN_FILE, "rb") as f:
         creds = pickle.load(f)
 
-    # auto refresh if expired
     if creds.expired and creds.refresh_token:
         print("  Refreshing token...")
         creds.refresh(Request())
@@ -35,16 +41,43 @@ def get_drive_service():
     return build("drive", "v3", credentials=creds)
 
 
-def upload_to_drive(file_path, filename):
+def upload_to_drive(file_path, drive_filename):
     service = get_drive_service()
-    file_metadata = {"name": filename, "parents": [DRIVE_FOLDER_ID]}
+    file_metadata = {"name": drive_filename, "parents": [DRIVE_FOLDER_ID]}
     media = MediaFileUpload(file_path, mimetype="image/jpeg")
     file = service.files().create(
         body=file_metadata,
         media_body=media,
-        fields="id, webViewLink"
+        fields="id, name"
     ).execute()
-    return file.get("id"), file.get("webViewLink")
+    return file.get("id"), file.get("name")
+
+
+# ── AppSheet API ──────────────────────────────────────────
+
+def update_appsheet_row(row_id, updates):
+    url = f"https://api.appsheet.com/api/v2/apps/{APPSHEET_APP_ID}/tables/{APPSHEET_TABLE}/Action"
+
+    headers = {
+        "ApplicationAccessKey": APPSHEET_API_KEY,
+        "Content-Type": "application/json"
+    }
+
+    body = {
+        "Action": "Edit",
+        "Properties": {
+            "Locale": "en-US"
+        },
+        "Rows": [
+            {
+                "id": row_id,
+                **updates
+            }
+        ]
+    }
+
+    response = requests.post(url, headers=headers, json=body, timeout=30)
+    return response.status_code, response.json()
 
 
 # ── Watermark ─────────────────────────────────────────────
@@ -79,8 +112,6 @@ def add_watermark(input_file, output_file, project, date, latlong):
     padding = 20
     x = 20
     y = image.height - text_height - (padding * 2) - 20
-
-    # removed draw.rectangle here
 
     draw.multiline_text((x, y), watermark_text, fill=(255, 255, 255), font=font)
 
@@ -125,6 +156,8 @@ def main():
     os.makedirs(UPLOAD_DIR, exist_ok=True)
     os.makedirs(PROCESSED_DIR, exist_ok=True)
 
+    appsheet_updates = {}
+
     for key, value in payload.items():
         if not key.startswith("photo_"):
             continue
@@ -153,12 +186,22 @@ def main():
 
         print(f"  [{key}] Uploading to Drive...")
         drive_filename = f"WM_{row_id}_{key}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
-        file_id, drive_link = upload_to_drive(processed_file, drive_filename)
+        file_id, uploaded_name = upload_to_drive(processed_file, drive_filename)
 
-        print(f"  [{key}] Done!")
-        print(f"         Drive: {drive_link}\n")
+        appsheet_path = f"Sheet1_Images/{uploaded_name}"
+        appsheet_updates[key] = appsheet_path
 
-    print("All done!")
+        print(f"  [{key}] Uploaded → {appsheet_path}")
+
+    if appsheet_updates:
+        print(f"\n  Updating AppSheet row {row_id}...")
+        print(f"  Updates: {appsheet_updates}")
+        status, result = update_appsheet_row(row_id, appsheet_updates)
+        print(f"  AppSheet response: {status} → {result}")
+    else:
+        print("\n  No photos to update in AppSheet.")
+
+    print("\nAll done!")
 
 
 if __name__ == "__main__":
