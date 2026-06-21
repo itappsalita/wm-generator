@@ -198,11 +198,6 @@ def main():
 
     if appsheet_updates:
         print(f"\n  Updating AppSheet row {row_id}...")
-
-        # keep existing values unchanged
-        lat, lng = latlong.split(",")
-        appsheet_updates["latlong"] = f"{lat.strip()},{lng.strip()}"
-
         print(f"  Updates: {appsheet_updates}")
         status, result = update_appsheet_row(row_id, appsheet_updates, email)
         print(f"  AppSheet response: {status} → {result}")
