@@ -14,7 +14,7 @@ import logging
 
 app = FastAPI()
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = "/var/www/wm-generator"
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
@@ -76,7 +76,7 @@ def update_appsheet_row(row_id, updates, email):
         "Action": "Edit",
         "Properties": {
             "Locale": "en-US",
-             "RunAsUserEmail": email
+            "RunAsUserEmail": email
         },
         "Rows": [
             {
@@ -88,7 +88,6 @@ def update_appsheet_row(row_id, updates, email):
 
     response = requests.post(url, headers=headers, json=body, timeout=30)
     return response.status_code, response.json()
-
 
 
 # ── Watermark ─────────────────────────────────────────────
@@ -128,7 +127,6 @@ def add_watermark(input_file, output_file, project, date, latlong):
     draw.multiline_text((x, y), watermark_text, fill=(255, 255, 255), font=font)
 
     image.save(output_file, quality=95)
-
 
 
 # ── Routes ────────────────────────────────────────────────
@@ -217,7 +215,7 @@ async def process_photo(request: Request):
             )
 
             drive_filename = f"WM_{row_id}_{key}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
-            drive_result = upload_to_drive(processed_file, drive_filename, DRIVE_FOLDER_ID)
+            file_id, uploaded_name = upload_to_drive(processed_file, drive_filename)
 
             # mark as processed
             processed_tracker[row_id][key] = value
@@ -226,12 +224,13 @@ async def process_photo(request: Request):
             # (note: 'latlong' is intentionally never included here —
             # that column uses an AppSheet Initial Value / HERE() and
             # should not be touched by this API update)
-            appsheet_updates[key] = f"Sheet1_Images/{drive_result['name']}"
+            appsheet_path = f"Sheet1_Images/{uploaded_name}"
+            appsheet_updates[key] = appsheet_path
 
             processed_files.append({
                 "field": key,
-                "drive_file_id": drive_result["file_id"],
-                "drive_link": drive_result["drive_link"]
+                "drive_file_id": file_id,
+                "drive_filename": uploaded_name
             })
 
         except Exception as e:
