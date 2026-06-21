@@ -143,7 +143,8 @@ def main():
     row_id = payload.get("id")
     project = payload.get("project", "-")
     date = payload.get("date", "-")
-    latlong = payload.get("latlong", "-")
+    latlong = payload.get("latlong", "")
+    email = payload.get("email", "")
 
     print(f"\n{'='*50}")
     print(f"  Processing: {filename}")
@@ -151,6 +152,7 @@ def main():
     print(f"  Project : {project}")
     print(f"  Date    : {date}")
     print(f"  LatLong : {latlong}")
+    print(f"  Email   : {email}")
     print(f"{'='*50}\n")
 
     os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -195,6 +197,11 @@ def main():
 
     if appsheet_updates:
         print(f"\n  Updating AppSheet row {row_id}...")
+
+        # keep existing values unchanged
+        appsheet_updates["latlong"] = latlong
+        appsheet_updates["email"] = email
+
         print(f"  Updates: {appsheet_updates}")
         status, result = update_appsheet_row(row_id, appsheet_updates)
         print(f"  AppSheet response: {status} → {result}")
