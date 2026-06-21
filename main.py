@@ -179,7 +179,7 @@ async def process_photo(request: Request):
 
         if value.startswith("Sheet1_Images/WM_"):
             print(f"  [{key}] Already watermarked — skip")
-        continue
+            continue
 
         print(f"  [{key}] Downloading...")
         response = requests.get(value, timeout=60)
