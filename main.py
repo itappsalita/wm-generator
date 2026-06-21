@@ -177,7 +177,7 @@ async def process_photo(request: Request):
             print(f"  [{key}] empty — skip")
             continue
 
-        if value.startswith("Sheet1_Images/WM_"):
+        if "GENERATEDWM_" in value:
             print(f"  [{key}] Already watermarked — skip")
             continue
 
@@ -201,7 +201,7 @@ async def process_photo(request: Request):
         add_watermark(original_file, processed_file, project, date, latlong)
 
         print(f"  [{key}] Uploading to Drive...")
-        drive_filename = f"WM_{row_id}_{key}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+        drive_filename = f"GENERATEDWM_{row_id}_{key}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
         file_id, uploaded_name = upload_to_drive(processed_file, drive_filename)
 
         appsheet_path = f"Sheet1_Images/{uploaded_name}"
