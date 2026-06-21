@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request
 from PIL import Image, ImageDraw, ImageFont
 from datetime import datetime
 from dotenv import load_dotenv
-from google.auth.transport.requests import Request
+from google.auth.transport.requests import Request as GoogleAuthRequest
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 import requests
@@ -40,7 +40,7 @@ def get_drive_service():
 
     if creds.expired and creds.refresh_token:
         print("  Refreshing token...")
-        creds.refresh(Request())
+        creds.refresh(GoogleAuthRequest())
         with open(TOKEN_FILE, "wb") as f:
             pickle.dump(creds, f)
 
