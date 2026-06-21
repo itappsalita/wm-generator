@@ -200,8 +200,6 @@ def main():
         print(f"\n  Updating AppSheet row {row_id}...")
 
         # keep existing values unchanged
-        appsheet_updates["latlong"] = latlong
-
         print(f"  Updates: {appsheet_updates}")
         status, result = update_appsheet_row(row_id, appsheet_updates, email)
         print(f"  AppSheet response: {status} → {result}")
