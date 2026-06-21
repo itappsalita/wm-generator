@@ -1,24 +1,31 @@
 from fastapi import FastAPI, Request
 from PIL import Image, ImageDraw, ImageFont
 from datetime import datetime
-from google.oauth2 import service_account
+from dotenv import load_dotenv
+from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 import requests
 import uuid
 import os
 import json
+import pickle
 import logging
 
 app = FastAPI()
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(os.path.join(BASE_DIR, ".env"))
+
 UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
 PROCESSED_DIR = os.path.join(BASE_DIR, "processed")
 REQUESTS_DIR = os.path.join(BASE_DIR, "requests")
-SERVICE_ACCOUNT_FILE = os.path.join(BASE_DIR, "service-account.json")
+TOKEN_FILE = os.path.join(BASE_DIR, "token.pickle")
 
-DRIVE_FOLDER_ID = "1anh13991wmHoArOKZNEuUI-JnkJEx8Qu"
+DRIVE_FOLDER_ID = os.getenv("DRIVE_FOLDER_ID")
+APPSHEET_APP_ID = os.getenv("APPSHEET_APP_ID")
+APPSHEET_API_KEY = os.getenv("APPSHEET_API_KEY")
+APPSHEET_TABLE = os.getenv("APPSHEET_TABLE", "Sheet1")
 
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(PROCESSED_DIR, exist_ok=True)
@@ -31,33 +38,57 @@ processed_tracker = {}
 # ── Google Drive ──────────────────────────────────────────
 
 def get_drive_service():
-    creds = service_account.Credentials.from_service_account_file(
-        SERVICE_ACCOUNT_FILE,
-        scopes=["https://www.googleapis.com/auth/drive"]
-    )
+    with open(TOKEN_FILE, "rb") as f:
+        creds = pickle.load(f)
+
+    if creds.expired and creds.refresh_token:
+        print("  Refreshing token...")
+        creds.refresh(Request())
+        with open(TOKEN_FILE, "wb") as f:
+            pickle.dump(creds, f)
+
     return build("drive", "v3", credentials=creds)
 
 
-def upload_to_drive(file_path: str, filename: str, folder_id: str) -> dict:
+def upload_to_drive(file_path, drive_filename):
     service = get_drive_service()
-
-    file_metadata = {
-        "name": filename,
-        "parents": [folder_id]
-    }
-
+    file_metadata = {"name": drive_filename, "parents": [DRIVE_FOLDER_ID]}
     media = MediaFileUpload(file_path, mimetype="image/jpeg")
-
     file = service.files().create(
         body=file_metadata,
         media_body=media,
-        fields="id, webViewLink"
+        fields="id, name"
     ).execute()
+    return file.get("id"), file.get("name")
 
-    return {
-        "file_id": file.get("id"),
-        "drive_link": file.get("webViewLink")
+
+# ── AppSheet API ──────────────────────────────────────────
+
+def update_appsheet_row(row_id, updates, email):
+    url = f"https://api.appsheet.com/api/v2/apps/{APPSHEET_APP_ID}/tables/{APPSHEET_TABLE}/Action"
+
+    headers = {
+        "ApplicationAccessKey": APPSHEET_API_KEY,
+        "Content-Type": "application/json"
     }
+
+    body = {
+        "Action": "Edit",
+        "Properties": {
+            "Locale": "en-US",
+             "RunAsUserEmail": email
+        },
+        "Rows": [
+            {
+                "id": row_id,
+                **updates
+            }
+        ]
+    }
+
+    response = requests.post(url, headers=headers, json=body, timeout=30)
+    return response.status_code, response.json()
+
 
 
 # ── Watermark ─────────────────────────────────────────────
@@ -72,24 +103,14 @@ def get_font():
         return ImageFont.load_default()
 
 
-def add_watermark(
-    input_file,
-    output_file,
-    project,
-    date,
-    latlong
-):
+def add_watermark(input_file, output_file, project, date, latlong):
     image = Image.open(input_file)
-
     if image.mode != "RGB":
         image = image.convert("RGB")
 
     draw = ImageDraw.Draw(image)
     font = get_font()
-
-    timestamp = datetime.now().strftime(
-        "%Y-%m-%d %H:%M:%S"
-    )
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     watermark_text = (
         f"Project : {project}\n"
@@ -98,38 +119,16 @@ def add_watermark(
         f"Stamp   : {timestamp}"
     )
 
-    bbox = draw.multiline_textbbox(
-        (0, 0),
-        watermark_text,
-        font=font
-    )
-
-    text_width = bbox[2] - bbox[0]
+    bbox = draw.multiline_textbbox((0, 0), watermark_text, font=font)
     text_height = bbox[3] - bbox[1]
-
     padding = 20
-
     x = 20
     y = image.height - text_height - (padding * 2) - 20
 
-    draw.rectangle(
-        (
-            x - padding,
-            y - padding,
-            x + text_width + padding,
-            y + text_height + padding
-        ),
-        fill=(0, 0, 0)
-    )
-
-    draw.multiline_text(
-        (x, y),
-        watermark_text,
-        fill=(255, 255, 255),
-        font=font
-    )
+    draw.multiline_text((x, y), watermark_text, fill=(255, 255, 255), font=font)
 
     image.save(output_file, quality=95)
+
 
 
 # ── Routes ────────────────────────────────────────────────
@@ -160,6 +159,7 @@ async def process_photo(request: Request):
     project = payload.get("project", "-")
     date = payload.get("date", "-")
     latlong = payload.get("latlong", "-")
+    email = payload.get("email", "")
 
     if row_id not in processed_tracker:
         processed_tracker[row_id] = {}
@@ -167,6 +167,7 @@ async def process_photo(request: Request):
     processed_files = []
     skipped = []
     failed = []
+    appsheet_updates = {}
 
     for key, value in payload.items():
 
@@ -221,6 +222,12 @@ async def process_photo(request: Request):
             # mark as processed
             processed_tracker[row_id][key] = value
 
+            # queue this field for the AppSheet row update
+            # (note: 'latlong' is intentionally never included here —
+            # that column uses an AppSheet Initial Value / HERE() and
+            # should not be touched by this API update)
+            appsheet_updates[key] = f"Sheet1_Images/{drive_result['name']}"
+
             processed_files.append({
                 "field": key,
                 "drive_file_id": drive_result["file_id"],
@@ -231,13 +238,29 @@ async def process_photo(request: Request):
             print(f"Failed processing {key}: {str(e)}")
             failed.append({"field": key, "reason": str(e)})
 
+    appsheet_status = None
+    appsheet_result = None
+
+    if appsheet_updates:
+        try:
+            appsheet_status, appsheet_result = update_appsheet_row(
+                row_id, appsheet_updates, email
+            )
+        except Exception as e:
+            print(f"AppSheet update failed for row {row_id}: {str(e)}")
+            appsheet_status = "error"
+            appsheet_result = str(e)
+
     return {
         "status": "success",
         "row_id": row_id,
         "processed": len(processed_files),
         "skipped": skipped,
         "failed": failed,
-        "files": processed_files
+        "files": processed_files,
+        "appsheet_updates": appsheet_updates,
+        "appsheet_status": appsheet_status,
+        "appsheet_result": appsheet_result
     }
 
 
