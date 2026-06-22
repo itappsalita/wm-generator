@@ -129,7 +129,7 @@ def get_font():
     try:
         return ImageFont.truetype(
             "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            28
+            20          # ← reduced from 28
         )
     except:
         return ImageFont.load_default()
@@ -152,10 +152,13 @@ def add_watermark(input_file, output_file, site_id, site_name, latlong, date):
     )
 
     bbox = draw.multiline_textbbox((0, 0), watermark_text, font=font)
+    text_width  = bbox[2] - bbox[0]
     text_height = bbox[3] - bbox[1]
     padding = 20
-    x = 20
-    y = image.height - text_height - (padding * 2) - 20
+
+    # Bottom-right corner
+    x = image.width  - text_width  - padding
+    y = image.height - text_height - padding
 
     draw.multiline_text((x, y), watermark_text, fill=(255, 255, 255), font=font)
 
@@ -264,7 +267,7 @@ async def process_photo(request: Request):
         drive_filename = f"GENERATEDWM_{row_id}_{end_label}_{safe_key}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
         file_id, uploaded_name = upload_to_drive(processed_file, drive_filename)
 
-        appsheet_path = f"Sheet1_Images/{uploaded_name}"
+        appsheet_path = f"LIST_Images/{uploaded_name}"
         appsheet_updates[key] = appsheet_path
 
         print(f"  [{key}] Uploaded → {appsheet_path}")
