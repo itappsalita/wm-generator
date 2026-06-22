@@ -153,7 +153,7 @@ async def process_photo(request: Request):
     row_id = payload.get("id")
     project = payload.get("project", "-")
     date = payload.get("date", "-")
-    latlong = payload.get("temp_latlong", "")
+    latlong = payload.get("latlong", "")
     email = payload.get("email", "")
 
     print(f"\n{'='*50}")
