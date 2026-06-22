@@ -85,7 +85,8 @@ def update_appsheet_row(row_id, updates, email):
     print(f"\n  AppSheet Status: {response.status_code}")
     print(f"  AppSheet Raw   : {response.text}")
 
-    return response.status_code, response.json()
+    result = response.json() if response.text.strip() else {"status": "ok"}
+    return response.status_code, result
 
 
 # ── Coordinate Conversion ─────────────────────────────────
