@@ -77,14 +77,15 @@ def update_appsheet_row(row_id, updates, email):
         },
         "Rows": [
             {
-                "id": row_id,
+                "Visit ID": row_id,
                 **updates
             }
         ]
     }
 
     response = requests.post(url, headers=headers, json=body, timeout=30)
-    return response.status_code, response.json()
+    result = response.json() if response.text.strip() else {"status": "ok"}
+    return response.status_code, result
 
 
 # ── Coordinate Conversion ─────────────────────────────────
