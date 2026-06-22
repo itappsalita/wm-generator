@@ -65,7 +65,7 @@ def get_location_name(latlong: str) -> dict:
 
 def main():
     # ── Ganti koordinat di sini ───────────────────────────
-    latlong = "-6.303334, 106.837142"
+    latlong = "-6.305435, 106.853183"
     # ─────────────────────────────────────────────────────
 
     print(f"\nLooking up: {latlong}")

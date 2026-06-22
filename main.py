@@ -87,6 +87,42 @@ def update_appsheet_row(row_id, updates, email):
     return response.status_code, response.json()
 
 
+# ── Coordinate Conversion ─────────────────────────────────
+
+def decimal_to_dms(decimal_deg, is_lat):
+    """Convert decimal degrees to DMS string (e.g. 6° 18' 19.566'' S)"""
+    is_negative = decimal_deg < 0
+    decimal_deg = abs(decimal_deg)
+
+    degrees = int(decimal_deg)
+    minutes_float = (decimal_deg - degrees) * 60
+    minutes = int(minutes_float)
+    seconds = (minutes_float - minutes) * 60
+
+    if is_lat:
+        direction = "S" if is_negative else "N"
+    else:
+        direction = "W" if is_negative else "E"
+
+    return f"{degrees}° {minutes}' {seconds:.4f}'' {direction}"
+
+
+def parse_latlong(latlong_str):
+    """
+    Parse '-6.305435, 106.853183' → '6° 18' 19.566'' S, 106° 51' 11.4588'' E'
+    Returns original string if parsing fails.
+    """
+    try:
+        parts = latlong_str.strip().split(",")
+        if len(parts) != 2:
+            return latlong_str
+        lat = float(parts[0].strip())
+        lng = float(parts[1].strip())
+        return f"{decimal_to_dms(lat, is_lat=True)}, {decimal_to_dms(lng, is_lat=False)}"
+    except Exception:
+        return latlong_str
+
+
 # ── Watermark ─────────────────────────────────────────────
 
 def get_font():
@@ -99,20 +135,20 @@ def get_font():
         return ImageFont.load_default()
 
 
-def add_watermark(input_file, output_file, project, date, latlong):
+def add_watermark(input_file, output_file, site_id, site_name, latlong, date):
     image = Image.open(input_file)
     if image.mode != "RGB":
         image = image.convert("RGB")
 
     draw = ImageDraw.Draw(image)
     font = get_font()
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    dms_latlong = parse_latlong(latlong)
 
     watermark_text = (
-        f"Project : {project}\n"
-        f"Date    : {date}\n"
-        f"GPS     : {latlong}\n"
-        f"Stamp   : {timestamp}"
+        f"{site_id} - {site_name}\n"
+        f"GPS  : {dms_latlong}\n"
+        f"Date : {date}"
     )
 
     bbox = draw.multiline_textbbox((0, 0), watermark_text, font=font)
@@ -150,19 +186,24 @@ async def process_photo(request: Request):
 
     payload = await request.json()
 
-    row_id = payload.get("id")
-    project = payload.get("project", "-")
-    date = payload.get("date", "-")
-    latlong = payload.get("latlong", "")
-    email = payload.get("email", "")
+    row_id    = payload.get("id")
+    date      = payload.get("date", "-")
+    latlong   = payload.get("latlong", "")
+    email     = payload.get("email", "")
+
+    # Near End & Far End site info
+    ne_site_id   = payload.get("SITE ID NEAR END", "-")
+    ne_site_name = payload.get("SITE NAME NEAR END", "-")
+    fe_site_id   = payload.get("SITE ID FAR END", "-")
+    fe_site_name = payload.get("SITE NAME FAR END", "-")
 
     print(f"\n{'='*50}")
-    print(f"  Processing row: {row_id}")
-    print(f"  ID      : {row_id}")
-    print(f"  Project : {project}")
-    print(f"  Date    : {date}")
-    print(f"  LatLong : {latlong}")
-    print(f"  Email   : {email}")
+    print(f"  Processing row : {row_id}")
+    print(f"  NE Site        : {ne_site_id} / {ne_site_name}")
+    print(f"  FE Site        : {fe_site_id} / {fe_site_name}")
+    print(f"  Date           : {date}")
+    print(f"  LatLong        : {latlong}")
+    print(f"  Email          : {email}")
     print(f"{'='*50}\n")
 
     os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -171,17 +212,28 @@ async def process_photo(request: Request):
     appsheet_updates = {}
 
     for key, value in payload.items():
-        if not key.startswith("photo_"):
+        # Only process keys that contain "Picture" (photo columns)
+        if "Picture" not in key and "PHOTO" not in key:
             continue
         if not value:
             print(f"  [{key}] empty — skip")
             continue
-
-        if "GENERATEDWM_" in value:
+        if "GENERATEDWM_" in str(value):
             print(f"  [{key}] Already watermarked — skip")
             continue
 
-        print(f"  [{key}] Downloading...")
+        # Determine Near End or Far End based on key name
+        key_lower = key.lower()
+        if "near end" in key_lower or "near" in key_lower.split("picture")[0]:
+            site_id   = ne_site_id
+            site_name = ne_site_name
+            end_label = "NE"
+        else:
+            site_id   = fe_site_id
+            site_name = fe_site_name
+            end_label = "FE"
+
+        print(f"  [{end_label}] [{key}] Downloading...")
         response = requests.get(value, timeout=60)
 
         if response.status_code != 200:
@@ -198,10 +250,18 @@ async def process_photo(request: Request):
             f.write(response.content)
 
         print(f"  [{key}] Adding watermark...")
-        add_watermark(original_file, processed_file, project, date, latlong)
+        add_watermark(
+            original_file,
+            processed_file,
+            site_id=site_id,
+            site_name=site_name,
+            latlong=latlong,
+            date=date
+        )
 
         print(f"  [{key}] Uploading to Drive...")
-        drive_filename = f"GENERATEDWM_{row_id}_{key}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+        safe_key = key.replace(" ", "_").replace("/", "-")[:40]
+        drive_filename = f"GENERATEDWM_{row_id}_{end_label}_{safe_key}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
         file_id, uploaded_name = upload_to_drive(processed_file, drive_filename)
 
         appsheet_path = f"Sheet1_Images/{uploaded_name}"
@@ -258,9 +318,4 @@ async def inspect(request: Request):
 
 if __name__ == "__main__":
     import uvicorn
-
-    uvicorn.run(
-        app,
-        host="0.0.0.0",
-        port=9000
-    )
+    uvicorn.run(app, host="0.0.0.0", port=9000)
