@@ -71,7 +71,7 @@ def update_appsheet_row(row_id, updates, email):
         },
         "Rows": [
             {
-                "id": row_id,
+                "Visit ID": row_id,
                 **updates
             }
         ]
