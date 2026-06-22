@@ -213,10 +213,10 @@ async def process_photo(request: Request):
     os.makedirs(PROCESSED_DIR, exist_ok=True)
 
     appsheet_updates = {}
-
+    PHOTO_KEYWORDS = ["Picture", "PHOTO", "Team On-site", "SITE NEAR END PHOTO", "SITE FAR END PHOTO"]
     for key, value in payload.items():
         # Only process keys that contain "Picture" (photo columns)
-        if "Picture" not in key and "PHOTO" not in key:
+        if not any(keyword in key for keyword in PHOTO_KEYWORDS):
             continue
         if not value:
             print(f"  [{key}] empty — skip")
@@ -227,7 +227,7 @@ async def process_photo(request: Request):
 
         # Determine Near End or Far End based on key name
         key_lower = key.lower()
-        if "near end" in key_lower or "near" in key_lower.split("picture")[0]:
+        if "near end" in key_lower or key_lower.endswith(" ne") or " ne " in key_lower:
             site_id   = ne_site_id
             site_name = ne_site_name
             end_label = "NE"
