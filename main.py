@@ -147,8 +147,8 @@ def add_watermark(input_file, output_file, site_id, site_name, latlong, date):
 
     watermark_text = (
         f"{site_id} - {site_name}\n"
-        f"GPS  : {dms_latlong}\n"
-        f"Date : {date}"
+        f"{dms_latlong}\n"
+        f"{date}"
     )
 
     bbox = draw.multiline_textbbox((0, 0), watermark_text, font=font)
